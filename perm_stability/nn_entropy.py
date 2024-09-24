@@ -1,10 +1,3 @@
-"""
-recipe for computing sinkhorn entropy for neural networks
-1. weight or activation align the networks
-2. get cost matrices for each permutation
-3. normalize cost matrices in terms of init std and non-permuted dimension m
-4. compute sinkhorn entropy for cost matrices with fixed lambda
-"""
 from copy import deepcopy
 from typing import Dict, Union, Tuple, List
 import numpy as np
@@ -54,7 +47,9 @@ def nn_sinkhorn_entropies(
             If a tuple of floats, use these as the means and stds for all layers.
             If a dictionary, assign means and stds by key to corresponding named parameters.
             Set to (1, 0) to avoid normalizing. Defaults to None.
-        align_obj (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Provide custom alignment that returns fit() and predict().
+        align_obj (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Provide custom alignment object that implements
+            fit(A, B) -> Tuple[Dict[str, List[int]], Dict[List[nn.ndarray]]],
+            where the return values are the permutations and similarity matrices per iteration of the alignment algorithm.
         align_type (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Alignment algorithm to use. Defaults to "weight".
         dataloader (Union[torch.utils.data.DataLoader, None], optional): Data for computing activations if doing activation alignment. Defaults to None.
         min_reg (float, optional): If reg is None, this is the smallest reg to include. Defaults to 0.01.
