@@ -5,7 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from initializations import is_conv_weight
+from perm_stability.initializations import is_conv_weight
 
 
 def is_running_statistic(key, shape):
