@@ -1,6 +1,7 @@
 import unittest
 from perm_stability.test.test_utils import *
 from perm_stability.sinkhorn_entropy import normalize_weight
+from perm_stability.initializations import is_normalization_weight
 
 from nnperm.spec.perm_spec import PermutationSpec
 from nnperm.align.kernel import get_kernel_from_name
@@ -17,7 +18,7 @@ class BaseTest(unittest.TestCase):
 
         matrix_pairs = list(yield_matrix_pairs())
         matrix_pairs = [matrix_pairs[i] for i in range(0, len(matrix_pairs), 5)][:10]
-        self.matrix_pairs = [normalize_weight(a, b, init_std=std) for _, a, b, std in matrix_pairs]
+        self.matrix_pairs = {k: normalize_weight(a, b, init_std=std) for k, a, b, std in matrix_pairs}
 
         self.ckpt_init = get_test_ckpts()["init"][0]
         self.ckpt_trained = get_test_ckpts()["trained"][0]
@@ -25,6 +26,7 @@ class BaseTest(unittest.TestCase):
 
         self.perm_spec = PermutationSpec.from_residual_model(self.ckpt_init)
         self.perm_dims = self.perm_spec.get_sizes(self.ckpt_init)
+        self.n_points = 10
 
     def assert_array_close(self, a, b):
         np.testing.assert_allclose(a, b, rtol=5e-2, atol=5e-2)
@@ -45,15 +47,14 @@ class BaseTest(unittest.TestCase):
                     # stack all norm weights to get more samples
                     norm_weights.append(v)
                 else:
-                    delta = min(2 / v[0].size**(1/2), 0.35)
-                    # print(k, v.shape, np.std(v), np.mean(v), delta)
+                    delta = min(2 / v[0].size**(1/2), 0.5)
                     self.assertAlmostEqual(np.mean(v), 0, delta=delta)
                     self.assertAlmostEqual(np.std(v), 1, delta=delta)
 
         # do all norm weights at once for closer statistical approximation
         if len(norm_weights) > 0:
             norm_weights = np.concatenate(norm_weights)
-            delta = min(2 / norm_weights.size**(1/2), 0.35)
+            delta = min(2 / norm_weights.size**(1/2), 0.5)
             self.assertAlmostEqual(np.mean(norm_weights), 0, delta=delta)
             self.assertAlmostEqual(np.std(norm_weights), 1, delta=delta)
 

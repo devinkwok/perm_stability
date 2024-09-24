@@ -23,7 +23,7 @@ def init_uniform_std_mean(min_range, max_range):
     return std, mean
 
 
-def nn_normalize_weights(state_dict, std_mean: Union[Tuple[float, float], Dict[str, Tuple[float, float]], None] = None):
+def auto_normalize_weights(state_dict, std_mean: Union[Tuple[float, float], Dict[str, Tuple[float, float]], None] = None):
     # normalize using provided stds and means
     if std_mean is not None:
         if isinstance(std_mean, tuple):

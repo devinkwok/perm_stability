@@ -5,17 +5,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
-def is_conv_weight(key, shape):
-    return (len(shape) > 1) and key.endswith(".weight")
-
-
-def is_normalization_weight(key, shape):
-    return (len(shape) == 1) and key.endswith(".weight")
+from initializations import is_conv_weight
 
 
 def is_running_statistic(key, shape):
-    return (len(shape) == 1) and ".running_" in key
+    return ((len(shape) == 1) and ".running_" in key) or \
+        ((len(shape) == 0) and key.endswith(".num_batches_tracked"))
 
 
 def remove_running_statistics(state_dict):

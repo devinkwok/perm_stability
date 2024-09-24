@@ -7,7 +7,7 @@
 `perm_stability` uses [nnperm](https://github.com/devinkwok/nnperm/) to align networks by weights or activations.
 
 If not using `nnperm` for alignment, you can manually provide cost matrices to
- `nn_sinkhorn_ot`, `nn_normalized_kl`, and `nn_kl_curve` in `nn_entropy`.
+ `nn_sinkhorn`, `nn_normalized_entropy`, and `nn_entropy_curve` in `nn_entropy`.
 
 ## Cost magnitude
 
@@ -22,5 +22,5 @@ however this does give a consistent standard on which the Sinkhorn algorithm is 
 
 To match this functionality in matrices, call `sinkhorn_entropy.normalize_weight`
 on the input pair and `sinkhorn_entropy.normalized_cost` to get the cost matrix.
-In neural networks, call `nn_normalize_weights` on the input pair, get the cost matrix,
-and call `nn_normalize_costs` on the cost matrix.
+In neural networks, call `initializations.auto_normalize_weights` on the input pair, get the cost matrix,
+and call `nn_entropy.nn_normalize_costs` on the cost matrix.

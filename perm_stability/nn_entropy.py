@@ -1,4 +1,3 @@
-
 """
 recipe for computing sinkhorn entropy for neural networks
 1. weight or activation align the networks
@@ -7,6 +6,7 @@ recipe for computing sinkhorn entropy for neural networks
 4. compute sinkhorn entropy for cost matrices with fixed lambda
 """
 from typing import Dict, Union
+from typing import Dict, Union, Tuple, List
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,32 +16,22 @@ from nnperm.align.activation_align import ActivationAlignment
 from nnperm.spec.perm_spec import PermutationSpec
 
 from perm_stability.sinkhorn_entropy import sinkhorn_fp, normalized_entropy, entropy_curve, COST_FN_AND_STD
+from perm_stability.initializations import auto_normalize_weights
+
 
 
 def nn_cost_matrices(
         perm_spec: PermutationSpec,
         A: Union[Dict[str, torch.Tensor], nn.Module],
         B: Union[Dict[str, torch.Tensor], nn.Module] = None,
+        cost: str = "linear",
         align_obj=None,
         align_type: str = "weight",
-        align_kernel: str = "linear",
         dataloader: Union[torch.utils.data.DataLoader, None] = None,
         normalize_m: bool = True,
-        return_permutations: bool = False,
+        return_minimizing_permutation: bool = False,
 ) -> Dict[str, np.ndarray]:
-    """IMPORTANT: A, B must be normalized if align_type="weight" and align_kernel="linear"
-
-    Args:
-        A (Union[Dict[str, torch.Tensor], nn.Module]): first model or state dict
-        B (Union[Dict[str, torch.Tensor], nn.Module], optional): second model or state dict. If None, use first model here. Defaults to None.
-        perm_spec (PermutationSpec): from nnperm, specifies how to assign parameters and dims to permutations
-        align_obj (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Provide custom alignment that returns fit() and predict().
-        align_type (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Alignment algorithm to use. Defaults to "weight".
-        align_kernel (Literal[&quot;linear&quot;, &quot;cosine&quot;], optional): Similarity metric that the permutation maximizes. Defaults to "linear".
-        dataloader (Union[torch.utils.data.DataLoader, None], optional): Data for computing activations if doing activation alignment. Defaults to None.
-
-    Returns:
-        Dict[str, np.ndarray]: dictionary of permutations and their associated cost matrices.
+    """IMPORTANT: A, B must be normalized if cost="linear" and align_type="weight"
     """
     B = A if B is None else B
 
@@ -50,38 +40,41 @@ def nn_cost_matrices(
         if align_type == "activation":
             assert isinstance(A, nn.Module) and isinstance(B, nn.Module)
             assert dataloader is not None
-            align_obj = ActivationAlignment(perm_spec, dataloader, A, B, kernel=align_kernel)
+            align_obj = ActivationAlignment(perm_spec, dataloader, A, B, kernel=cost)
         else:
-            align_obj = WeightAlignment(perm_spec, align_kernel)
+            align_obj = WeightAlignment(perm_spec, kernel=cost)
 
     params_A = A.state_dict() if isinstance(A, nn.Module) else A
     params_B = B.state_dict() if isinstance(B, nn.Module) else B
-    
+
     # normalize, then align (this will change the alignment somewhat vs not normalizing)
     permutations, similarity_matrices = align_obj.fit(params_A, params_B)
 
-    # similarity_matrices includes multiple iterations, we only want the last one
-    # multiply by -1 to turn into cost
-    costs = {k: -1 * v[-1] for k, v in similarity_matrices.items()}
+    costs = {}
+    for k in perm_spec.group_to_axes.keys():
+        # similarity_matrices includes multiple iterations, we only want the last one
+        # multiply by -1 to turn into cost, reorder to match perm_spec
+        # increase precision to float128 as this makes Sinkhorn more stable
+        costs[k] = -1 * (similarity_matrices[k][-1]).astype(np.float128)
 
     if normalize_m:
         non_permuted_sizes = get_non_permuted_sizes(params_A, perm_spec)
-        costs = nn_normalize_costs(costs, non_permuted_sizes, align_kernel)
+        costs = nn_normalize_costs(costs, non_permuted_sizes, cost)
 
-    if return_permutations:
+    if return_minimizing_permutation:
         return costs, permutations
     return costs
 
 
 def nn_normalize_costs(
-        similarity_matrices: Dict[str, np.ndarray],
+        cost_matrices: Dict[str, np.ndarray],
         non_permuted_sizes: Dict[str, int],
-        align_kernel: str,
+        cost: str,
 ):
-    _, cost_std = COST_FN_AND_STD[align_kernel]
+    _, cost_std = COST_FN_AND_STD[cost]
     normalized = {}
-    for k, v in similarity_matrices.items():
-        normalized[k] = -1 * v / cost_std(non_permuted_sizes[k])
+    for k, v in cost_matrices.items():
+        normalized[k] = v / cost_std(non_permuted_sizes[k])
     return normalized
 
 
@@ -102,31 +95,37 @@ def apply_fn_to_dict(dictionary, apply_fn):
     return {k: apply_fn(v) for k, v in dictionary.items()}
 
 
-def nn_sinkhorn_ot(
+def nn_sinkhorn(
         cost_matrices: Dict[str, np.ndarray],
         regularization=1,
         max_iter=100,
-        rtol=1e-4,
-        atol=1e-4,
+        stop_rtol=1e-4,
+        stop_atol=1e-4,
         logspace=True
 ):
-    def apply_fn(c):
-        return sinkhorn_fp(-regularization * c, max_iter=max_iter, rtol=rtol, atol=atol, logspace=logspace)
+    def partial_sinkhorn_fp(c):
+        return sinkhorn_fp(-regularization * c, max_iter=max_iter, stop_rtol=stop_rtol, stop_atol=stop_atol, logspace=logspace)
 
-    return apply_fn_to_dict(cost_matrices, apply_fn)
-
-
-def nn_normalized_entropy(perm_matrices):
-    return apply_fn_to_dict(perm_matrices, normalized_entropy)
+    return apply_fn_to_dict(cost_matrices, partial_sinkhorn_fp)
 
 
-def nn_entropy_curve(cost_matrices, min_l=0.01, max_l=100, n_points=40):
+def nn_normalized_entropy(perm_matrices, rtol=3e-2, atol=3e-2):
+
+    def partial_normalized_entropy(p):
+        return normalized_entropy(p, rtol=rtol, atol=atol)
+
+    return apply_fn_to_dict(perm_matrices, partial_normalized_entropy)
+
+
+def nn_entropy_curve(cost_matrices, reg=None, min_reg=0.01, max_reg=100, n_points=40, rtol=3e-2, atol=3e-2, return_permutation=False):
 
     def partial_entropy_curve(c):
-        return entropy_curve(c, min_l=min_l, max_l=max_l, n_points=n_points)
+        return entropy_curve(c, reg=reg, min_reg=min_reg, max_reg=max_reg, n_points=n_points,
+                             rtol=rtol, atol=atol, return_permutation=return_permutation)
 
-    def apply_fn(c):
-        return partial_entropy_curve(c)[1]
-
-    lambdas, _ = partial_entropy_curve(np.ones([2, 2]))  # get the lambdas separately with dummy costs
-    return lambdas, apply_fn_to_dict(cost_matrices, apply_fn)
+    entropies = apply_fn_to_dict(cost_matrices, partial_entropy_curve)
+    if return_permutation:  # pull out permutations into its own dict
+        entropies_only = {k: v[0] for k, v in entropies.items()}
+        perms = {k: v[1] for k, v in entropies.items()}
+        return entropies_only, perms
+    return entropies
