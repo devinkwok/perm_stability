@@ -2,12 +2,16 @@
 
 `perm_stability` computes Sinkhorn-entropy: a measure of permutation stability between matrices or neural networks.
 
+
 ## Usage
 
 `perm_stability` uses [nnperm](https://github.com/devinkwok/nnperm/) to align networks by weights or activations.
 
 If not using `nnperm` for alignment, you can manually provide cost matrices to
  `nn_sinkhorn`, `nn_normalized_entropy`, and `nn_entropy_curve` in `nn_entropy`.
+
+Run tests with `python -m unittest discover perm_stability`.
+
 
 ## Cost magnitude
 

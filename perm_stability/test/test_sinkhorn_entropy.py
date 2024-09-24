@@ -106,5 +106,13 @@ class TestSinkhornEntropy(BaseTest):
             for s, ent in zip(alphas, entropies):
                 self.assertGreaterEqual(ent, ent_prev)
 
+    def test_sinkhorn_entropies(self):
+        for A, B in self.matrix_pairs.values():
+            for cost in COST_FN_AND_STD.keys():
+                curve = sinkhorn_entropies(A, B, cost=cost, n_points=self.n_points)
+                curve_true = entropy_curve(normalized_cost(*normalize_weight(A, B), cost=cost), n_points=self.n_points)
+                self.assert_curves_close(curve, curve_true)
+
+
 if __name__ == "__main__":
     unittest.main()

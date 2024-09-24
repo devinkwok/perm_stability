@@ -7,6 +7,7 @@ from perm_stability.sinkhorn_entropy import COST_FN_AND_STD, normalized_cost, no
 from perm_stability.initializations import auto_normalize_weights
 from perm_stability.nn_entropy import *
 
+from nnperm.align.weight_align import WeightAlignment
 from nnperm.align.kernel import get_kernel_from_name
 
 
@@ -69,6 +70,36 @@ class TestNNEntropy(BaseTest):
         X = np.random.uniform(0, 1, size=array.shape) < p
         return (X - mean) / std
 
+    def test_entropy_range(self):
+        # sanity checks: entropy is always 1 for lambda 0
+        # self entropy is 1 for uniformly identical matrices
+        A = {k: np.ones_like(v) for k, v in self.ckpt_init.items()}
+        curves = nn_sinkhorn_entropies(self.perm_spec, A, reg=[0, 1], cost="linear")
+        for k, v in curves.items():
+            (l_0, ent_0), (l_1, ent_1) = v
+            self.assertEqual(l_0, 0)
+            self.assertEqual(l_1, 1)
+            self.assertAlmostEqual(ent_0, 1)
+            self.assertAlmostEqual(ent_1, 1)
+
+        # self entropy is low among sparse identical matrices
+        A = {k: 1 * (v > 0.1) for k, v in self.ckpt_init.items()}
+        curves = nn_sinkhorn_entropies(self.perm_spec, A, reg=[0, 1], cost="linear")
+        for k, v in curves.items():
+            (l_0, ent_0), (l_1, ent_1) = v
+            self.assertAlmostEqual(ent_0, 1)
+            self.assertAlmostEqual(ent_1, 0)
+
+        # self entropy is near 1, particularly for sparse random matrices
+        p = 0.3
+        A = {k: self.bernoulli_like(v, p) for k, v in self.ckpt_init.items()}
+        B = {k: self.bernoulli_like(v, p) for k, v in self.ckpt_init.items()}
+        curves = nn_sinkhorn_entropies(self.perm_spec, A, B, reg=[0, 1], std_mean=(1, 0), cost="linear")
+        for k, v in curves.items():
+            (l_0, ent_0), (l_1, ent_1) = v
+            self.assertAlmostEqual(ent_0, 1)
+            self.assertGreaterEqual(ent_1, 0.5)
+
     def test_nn_cost_matrices(self):
         # only look at IID randomly initialized networks, see if their costs are normalized
         for pairname, ckpt_0, ckpt_1 in self.ckpt_pairs:
@@ -103,12 +134,17 @@ class TestNNEntropy(BaseTest):
                 self.assert_is_normalized(costs)
 
     def test_nn_sinkhorn_entropies(self):
+
+        def get_deterministic_align_obj(cost):
+            return WeightAlignment(self.perm_spec, cost, seed=42)
+
         for pairname, ckpt_0, ckpt_1 in self.ckpt_pairs:
             A = auto_normalize_weights(ckpt_0)
             B = auto_normalize_weights(ckpt_1)
 
             for cost_name, _ in COST_FN_AND_STD.items():
-                costs = nn_cost_matrices(self.perm_spec, A, B, cost=cost_name)
+                align_obj = get_deterministic_align_obj(cost_name)
+                costs = nn_cost_matrices(self.perm_spec, A, B, cost=cost_name, align_obj=align_obj)
                 self.assert_perm_shapes_correct(costs, self.perm_dims)
 
                 perms = nn_sinkhorn(costs)
@@ -125,6 +161,13 @@ class TestNNEntropy(BaseTest):
                         self.assertIsInstance(a, float)
                         self.assertIsInstance(b, float)
 
+                align_obj = get_deterministic_align_obj(cost_name)
+                all_in_one = nn_sinkhorn_entropies(self.perm_spec, ckpt_0, ckpt_1, cost=cost_name, align_obj=align_obj, n_points=self.n_points)
+                for k in entropy_curve.keys():
+                    l_a, ent_a = list(zip(*entropy_curve[k]))
+                    l_b, ent_b = list(zip(*all_in_one[k]))
+                    self.assert_array_equal(l_a, l_b)
+                    self.assert_array_close(ent_a, ent_b)
 
 
 if __name__ == "__main__":

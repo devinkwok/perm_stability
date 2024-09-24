@@ -7,6 +7,63 @@ import matplotlib.pyplot as plt  # type: ignore
 import pandas as pd  # type: ignore
 
 
+def sinkhorn_entropies(
+        A: np.ndarray,
+        B: Union[np.ndarray, None] = None,
+        reg: Union[None, float, List[float]] = None,
+        cost="linear",
+        init_std: float = 1,
+        perm_axis: int = 0,
+        min_reg=0.01,
+        max_reg=100,
+        n_points=40,
+        max_iter=100,
+        rtol=1e-4,
+        atol=1e-4,
+        logspace=True,
+        normalize_m=True,
+        return_permutation=False,
+        ) -> List[Tuple[float, float]]:
+    """Computes Sinkhorn entropies between a matrix and itself, or two matrices,
+    over a range of regularization terms $\lambda$.
+
+    Args:
+        A (np.ndarray): first matrix.
+        B (Union[np.ndarray, None], optional): second matrix, or first matrix (self-stability) if None. Defaults to None.
+        reg (Union[None, float, List[float]], optional): Value of regularizer $\lambda$, either a single value,
+        cost (str, optional): Method for computing cost that the permutations minimize between X and Y. Defaults to "linear".
+            a list of values, or None to use the default scale (exponential between min_reg and max_reg). Defaults to None.
+        init_std (float, optional): Divide A and B by this to normalize standard deviation. Defaults to 1.
+        min_reg (float, optional): If reg is None, this is the smallest reg to include. Defaults to 0.01.
+        max_reg (int, optional): If reg is None, this is the largest reg to include. Defaults to 100.
+        n_points (int, optional): If reg is None, this is the number of reg to compute
+            (exponential scaling between min_reg and max_reg). Defaults to 40.
+        max_iter (int, optional): Maximum Sinkhorn iterations. Defaults to 100.
+        rtol (float, optional): Relative tolerance allowed to compute entropy from doubly stochastic permutation matrix. Defaults to 1e-4.
+        atol (float, optional): Absolute tolerance allowed to compute entropy from doubly stochastic permutation matrix. Defaults to 1e-4.
+        logspace (bool, optional): Do Sinkhorn algorithm in logspace. Defaults to True.
+        normalize_m (bool, optional): Normalize cost by dividing out effect of summing non-permuted dimensions. Defaults to True.
+        return_permutation (bool, optional): Also return permutation distribution for given lambdas. Defaults to False.
+
+    Returns:
+        List[Tuple[float, float]]: Tuple of lambda and Sinkhorn entropy if reg is a float, or list of such tuples if reg is a List or None.
+            If return_permutation, permutation(s) are returned in the same format as the second tuple element.
+    """
+    if B is None:
+        B = A
+    A, B = normalize_weight(A, B, init_std=init_std, perm_axis=perm_axis)
+
+    M = normalized_cost(A, B, cost=cost, normalize_m=normalize_m)
+    if reg is None or isinstance(reg, list):
+        return entropy_curve(M, reg=reg, min_reg=min_reg, max_reg=max_reg, n_points=n_points, rtol=rtol, atol=atol, return_permutation=return_permutation)
+    else:
+        P = sinkhorn_fp(-reg * M, max_iter=max_iter, logspace=logspace)
+        entropies = (reg, normalized_entropy(P, rtol=rtol, atol=atol))
+        if return_permutation:
+            return entropies, P
+        return entropies
+
+
 def normalize_weight(*args, init_std=1, perm_axis=0):
     output = []
     for A in args:

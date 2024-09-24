@@ -5,7 +5,7 @@ recipe for computing sinkhorn entropy for neural networks
 3. normalize cost matrices in terms of init std and non-permuted dimension m
 4. compute sinkhorn entropy for cost matrices with fixed lambda
 """
-from typing import Dict, Union
+from copy import deepcopy
 from typing import Dict, Union, Tuple, List
 import numpy as np
 import torch
@@ -18,6 +18,75 @@ from nnperm.spec.perm_spec import PermutationSpec
 from perm_stability.sinkhorn_entropy import sinkhorn_fp, normalized_entropy, entropy_curve, COST_FN_AND_STD
 from perm_stability.initializations import auto_normalize_weights
 
+
+def nn_sinkhorn_entropies(
+        perm_spec: PermutationSpec,
+        A: Union[Dict[str, torch.Tensor], nn.Module],
+        B: Union[Dict[str, torch.Tensor], nn.Module] = None,
+        reg: Union[None, float, List[float]] = None,
+        cost: str = "linear",
+        std_mean: Union[Tuple[float, float], Dict[str, Tuple[float, float]], None] = None,
+        align_obj=None,
+        align_type: str = "weight",
+        dataloader: Union[torch.utils.data.DataLoader, None] = None,
+        min_reg=0.01,
+        max_reg=100,
+        n_points=40,
+        max_iter=100,
+        rtol=3e-2,
+        atol=3e-2,
+        logspace=True,
+        normalize_m: bool = True,
+        return_permutation: bool = False,
+):
+    """Computes Sinkhorn entropies for a neural network and itself, or two neural networks,
+    over a range of regularization terms $\lambda$.
+
+    Args:
+        perm_spec (PermutationSpec): from nnperm, specifies how to assign parameters and dims to permutations
+        A (Union[Dict[str, torch.Tensor], nn.Module]): first model or state dict
+        B (Union[Dict[str, torch.Tensor], nn.Module], optional): second model or state dict. If None, use first model here. Defaults to None.
+        reg (Union[None, float, List[float]], optional): Value of regularizer $\lambda$, either a single value,
+        cost (str, optional): Method for computing cost that the permutations minimize between X and Y. Defaults to "linear".
+        std_mean (Union[Tuple[float, float], Dict[str, Tuple[float, float]], None], optional):
+            Normalize all layers by subtracting mean and dividing std, where mean and std are fixed per layer.
+            If None, automatically means and stds based on layer type and their values at random initialization.
+            If a tuple of floats, use these as the means and stds for all layers.
+            If a dictionary, assign means and stds by key to corresponding named parameters.
+            Set to (1, 0) to avoid normalizing. Defaults to None.
+        align_obj (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Provide custom alignment that returns fit() and predict().
+        align_type (Literal[&quot;weight&quot;, &quot;activation&quot;], optional): Alignment algorithm to use. Defaults to "weight".
+        dataloader (Union[torch.utils.data.DataLoader, None], optional): Data for computing activations if doing activation alignment. Defaults to None.
+        min_reg (float, optional): If reg is None, this is the smallest reg to include. Defaults to 0.01.
+        max_reg (int, optional): If reg is None, this is the largest reg to include. Defaults to 100.
+        n_points (int, optional): If reg is None, this is the number of reg to compute
+            (exponential scaling between min_reg and max_reg). Defaults to 40.
+        max_iter (int, optional): Maximum Sinkhorn iterations. Defaults to 100.
+        rtol (float, optional): Relative tolerance allowed to compute entropy from doubly stochastic permutation matrix. Defaults to 1e-4.
+        atol (float, optional): Absolute tolerance allowed to compute entropy from doubly stochastic permutation matrix. Defaults to 1e-4.
+        logspace (bool, optional): Do Sinkhorn algorithm in logspace. Defaults to True.
+        normalize_m (bool, optional): Normalize cost by dividing out effect of summing non-permuted dimensions. Defaults to True.
+        return_permutation (bool, optional): Also return permutation distribution for given lambdas. Defaults to False.
+
+    Returns:
+        Dict[List[Tuple[float, float]]]: Dictionary of lambda and corresponding Sinkhorn entropies.
+            If return_permutation, permutation(s) are returned in the same format as the second tuple element.
+    """
+    A = auto_normalize_weights(A, std_mean=std_mean)
+    B = deepcopy(A) if B is None else auto_normalize_weights(B, std_mean=std_mean)
+
+    costs = nn_cost_matrices(perm_spec, A, B, cost=cost, align_obj=align_obj, align_type=align_type,
+                             dataloader=dataloader, normalize_m=normalize_m)
+
+    if reg is None or isinstance(reg, list):
+        return nn_entropy_curve(costs, reg=reg, min_reg=min_reg, max_reg=max_reg, n_points=n_points,
+                                rtol=rtol, atol=atol, return_permutation=return_permutation)
+    else:
+        perms = nn_sinkhorn(costs, reg=reg, max_iter=max_iter, logspace=logspace)
+        entropies = nn_normalized_entropy(perms, rtol=rtol, atol=atol)
+        if return_permutation:
+            return entropies, perms
+        return entropies
 
 
 def nn_cost_matrices(
